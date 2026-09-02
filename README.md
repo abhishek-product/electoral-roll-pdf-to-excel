@@ -13,23 +13,35 @@ has to be recovered visually.
 
 ## How it works
 
+0. **Pre-flight check** — before any OCR (about a second, one page), the file is
+   rejected with a specific reason if it cannot be opened, already has a text
+   layer, contains no images, or lacks the `ELECTORAL ROLL` / `Assembly
+   Constituency` markers near the top of page one. No compute is spent on a file
+   that was never going to work.
 1. **Locate entries** — morphological line detection (OpenCV) finds every
    elector box on the page. The layout is a regular 3-column grid of ~622×253 px
    boxes.
-2. **OCR each region separately** — the serial number, the EPIC number and the
-   body text are cropped and recognised independently, with character whitelists
-   where the expected shape is known. Box rules are erased first so borders
-   aren't read as digits.
-3. **Parse fields** — `Name`, `Father's/Husband's/Mother's/Others` relation,
-   `House Number`, `Age`, `Gender`, handling wrapped lines.
-4. **Reconcile** — the extracted count and male/female/third-gender split are
-   checked against the totals printed on the PDF's own cover page. Any part that
-   doesn't match is reported rather than silently accepted.
+2. **Derive crop regions** — the serial rectangle and photo placeholder are
+   themselves ruled boxes, so their coordinates are measured per entry rather
+   than assumed. A template whose internal spacing moves still crops correctly.
+   The 2026 SIR proportions remain only as a fallback.
+3. **OCR each region separately** — serial, EPIC and body are recognised
+   independently, with character whitelists where the expected shape is known.
+   Box rules are erased first so borders aren't read as digits.
+4. **Parse fields** — `Name`, `Father's/Husband's/Mother's/Others` relation,
+   `House Number`, `Age`, `Gender`, handling wrapped lines. Anything matching no
+   known label goes to `extra` and flags the row, so a new or renamed field
+   surfaces instead of being dropped.
+5. **Reconcile and guard** — the extracted count and male/female/third-gender
+   split are checked against the totals printed on the cover page. A separate
+   layout guard fires if fewer than 60% of entries yield a recognisable name,
+   which catches a moved template *even when every count reconciles* — the case
+   count checks are blind to.
 
 ## Output columns
 
 `part, polling_station, section, serial, seq, epic, name, relation,
-relative_name, house, age, gender, page, flag`
+relative_name, house, age, gender, page, extra, flag`
 
 - `serial` — the serial number as printed, read by OCR
 - `seq` — position in reading order within the part, independent of OCR
@@ -48,6 +60,21 @@ electors):
 - **81 / 81 parts reconciled** with their cover-page totals
 - 0 duplicate EPIC numbers; 0 blank names; 0 malformed EPIC numbers
 - Blind page spot-checks: 17 of 18 rows exact across every field
+
+## Outcomes
+
+Past the pre-flight gate, every path returns rows. The status says how much to
+trust them — a failed check is never a substitute for data.
+
+| Status | Meaning |
+|---|---|
+| `OK` | every check passed |
+| `OK (clipped field in PDF)` | a field the source PDF itself truncated is blank |
+| `CHECK` | counts or layout disagree; rows still returned, flagged |
+
+**Not yet supported:** rolls that already carry a text layer are rejected rather
+than parsed. Reading embedded text directly would be more accurate than OCR
+(no recognition error at all) and is the intended next addition.
 
 Known limits:
 
