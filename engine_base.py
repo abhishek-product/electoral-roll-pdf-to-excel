@@ -58,6 +58,55 @@ def derule(crop, hlen=40, vlen=22):
     return out
 
 
+def derive_regions(gray, box):
+    """Work out where the serial, EPIC and body sit inside one entry box.
+
+    The layout is recovered from the ruled rectangles actually present in the
+    box -- the serial sits in its own bordered rectangle and the photo
+    placeholder is another -- so a template whose internal spacing has moved
+    still crops correctly. Falls back to the proportions of the 2026 SIR
+    template only when those rules cannot be found.
+    """
+    x, y, w, h = box
+    sub = gray[y:y + h, x:x + w]
+    bw = cv2.threshold(sub, 200, 255, cv2.THRESH_BINARY_INV)[1]
+    hk = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 1))
+    vk = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 15))
+    lines = cv2.dilate(cv2.erode(bw, hk), hk) | cv2.dilate(cv2.erode(bw, vk), vk)
+    cnts, _ = cv2.findContours(lines, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    rects = [cv2.boundingRect(c) for c in cnts]
+    inner = [r for r in rects if r[2] < 0.9 * w and r[3] < 0.9 * h]
+
+    serial = [r for r in inner
+              if r[1] < 0.25 * h and 80 < r[2] < 0.5 * w and 18 < r[3] < 0.35 * h]
+    photo = [r for r in inner if r[0] > 0.5 * w and r[3] > 0.35 * h]
+    # smallest match = the inner edge of the border pair, so its interior is clean
+    s = min(serial, key=lambda r: r[2] * r[3]) if serial else None
+    p = min(photo, key=lambda r: r[2] * r[3]) if photo else None
+
+    if s:
+        sx, sy, sw, sh = s
+        ser = (x + sx + 3, y + sy + 3, x + sx + sw - 3, y + sy + sh - 3)
+        top = y + sy + sh + 1
+        epic_x0 = x + sx + sw + 10
+    else:
+        ser = (x + 13, y + 13, x + 201, y + 44)
+        top = y + HDR_H
+        epic_x0 = x + int(w * .68)
+
+    body_x1 = (x + p[0] - 6) if p else (x + int(w * PHOTO_CUT))
+    return {
+        "serial": ser,
+        "epic": (epic_x0, y + 2, x + w - 4, top),
+        "body": (x + 3, top, body_x1, y + h - 3),
+        "derived": bool(s and p),
+    }
+
+
+def _crop(gray, r):
+    return gray[r[1]:r[3], r[0]:r[2]]
+
+
 def stack(crops):
     """Pad crops to a common size and stack them vertically with white gaps."""
     h = max(c.shape[0] for c in crops)
@@ -305,13 +354,13 @@ def do_page(gray, tmpdir, pg):
         return [], {"page": pg + 1, "boxes": 0}
 
     sers, epics, bodies = [], [], []
-    for (x, y, w, h) in boxes:
-        cut = int(w * PHOTO_CUT)
-        # serial sits in a bordered rectangle at rel (10,10)-(204,47); take a
-        # generous window and erase the rectangle's rules so glyphs aren't clipped
-        sers.append(derule(gray[y + 4:y + 54, x + 6:x + 210]))
-        epics.append(gray[y + 2:y + HDR_H, x + int(w * .68):x + w - 4])
-        bodies.append(gray[y + HDR_H:y + h - 3, x + 3:x + cut])
+    n_derived = 0
+    for box in boxes:
+        reg = derive_regions(gray, box)
+        n_derived += reg["derived"]
+        sers.append(_crop(gray, reg["serial"]))
+        epics.append(_crop(gray, reg["epic"]))
+        bodies.append(_crop(gray, reg["body"]))
 
     s_img, s_cell = stack(sers)
     e_img, e_cell = stack(epics)
