@@ -1,0 +1,61 @@
+name: docker image
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t roll-extractor .
+
+      - name: Tesseract is present and English data is installed
+        run: |
+          docker run --rm roll-extractor tesseract --version
+          docker run --rm roll-extractor tesseract --list-langs
+
+      - name: Engine imports and finds tesseract
+        run: |
+          docker run --rm roll-extractor python -c "
+          import engine
+          assert engine.TESS, 'tesseract not discovered by engine.find_tesseract()'
+          print('engine resolved tesseract at', engine.TESS)
+          "
+
+      - name: Rejects a non-roll PDF with a specific reason
+        run: |
+          docker run --rm roll-extractor python -c "
+          import pypdf, engine
+          w = pypdf.PdfWriter()
+          for _ in range(2):
+              w.add_blank_page(width=595, height=842)
+          w.write('/tmp/blank.pdf')
+          kind, detail = engine.inspect_pdf('/tmp/blank.pdf')
+          assert kind == 'no_images', 'expected no_images, got %s' % kind
+          print('rejected correctly:', kind)
+          open('/tmp/junk.pdf','wb').write(b'not a pdf')
+          kind, _ = engine.inspect_pdf('/tmp/junk.pdf')
+          assert kind == 'unreadable', 'expected unreadable, got %s' % kind
+          print('rejected correctly:', kind)
+          "
+
+      - name: App serves and reports healthy
+        run: |
+          docker run -d --name app -p 8501:8501 roll-extractor
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8501/_stcore/health >/dev/null; then
+              echo "healthy after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "app did not become healthy; logs:"; docker logs app; exit 1
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs app || true
