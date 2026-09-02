@@ -84,11 +84,7 @@ def extract(uploads):
 
 
 st.title("🗳️ Electoral Roll PDF → Excel")
-st.caption(
-    "Upload scanned SIR draft electoral roll PDFs — the image-only kind with no "
-    "selectable text — and download the electors as a spreadsheet. "
-    "Roughly 4 seconds per page, so a 30-page part takes about two minutes."
-)
+st.caption("Upload one or more electoral roll PDFs.")
 
 uploads = st.file_uploader("Roll PDFs", type=["pdf"], accept_multiple_files=True,
                            label_visibility="collapsed")
