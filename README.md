@@ -110,12 +110,29 @@ Set `TESSERACT_PATH` if it isn't discoverable automatically.
 
 ## Deploy
 
-Built for [Streamlit Community Cloud](https://share.streamlit.io): point it at
-this repo with `streamlit_app.py` as the entrypoint. `packages.txt` installs
-Tesseract on the container; `requirements.txt` covers Python deps.
+### Streamlit Community Cloud
 
-Expect ~4 seconds per page on the free tier (2 vCPU). A 30-page part takes about
-two minutes, so it suits a few files at a time rather than bulk runs.
+Point it at this repo with `streamlit_app.py` as the entrypoint. `packages.txt`
+installs Tesseract on the container; `requirements.txt` covers Python deps.
+
+Caveat: Community Cloud injects a "Made with Streamlit" badge and attributes the
+app to its GitHub owner. That is platform chrome and cannot be configured away
+from inside the app; removing it also breaches their terms. Use the container
+route below if the app needs to be unbranded.
+
+### Any container host
+
+```bash
+docker build -t roll-extractor .
+docker run -p 8501:8501 roll-extractor
+```
+
+`$PORT` is honoured, so this works on Render, Fly.io and Cloud Run as-is, and on
+Hugging Face Spaces with `PORT=7860`. No badge, no owner attribution.
+
+Expect ~4 seconds per page on 2 vCPU. A 30-page part takes about two minutes, so
+it suits a few files at a time rather than bulk runs. Memory stays near
+6 MB × workers because pages are streamed in batches, so 1 GB is enough.
 
 ## Batch use
 
