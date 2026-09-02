@@ -49,6 +49,59 @@ def _repair(r):
     return r
 
 
+ROLL_MARKERS = [
+    (re.compile(r"ELECTORAL\s*ROLL", re.I), "ELECTORAL ROLL"),
+    (re.compile(r"Assembly\s*Constituency", re.I), "Assembly Constituency"),
+]
+
+
+def inspect_pdf(path):
+    """Pre-flight check, run before any expensive OCR.
+
+    Returns (kind, detail). kind == "ok" means it looks like a scanned roll.
+    A single file is uniformly text or image, so one check per file is enough.
+    """
+    import pypdf
+    try:
+        rdr = pypdf.PdfReader(path)
+        npages = len(rdr.pages)
+    except Exception as exc:
+        return "unreadable", "Could not be opened as a PDF (%s)." % type(exc).__name__
+    if npages == 0:
+        return "unreadable", "PDF contains no pages."
+
+    chars = 0
+    for p in rdr.pages[:3]:
+        try:
+            chars += len(p.extract_text() or "")
+        except Exception:
+            pass
+    if chars > 300:
+        return "text_layer", (
+            "This PDF has a machine-readable text layer (%d characters on the first "
+            "pages), so it is not a scanned roll. This tool reads image-only scans; "
+            "a text-layer roll should be parsed directly instead of OCR'd." % chars)
+
+    first = None
+    for _pg, gray in eb.page_images(path):
+        first = gray
+        break
+    if first is None:
+        return "no_images", (
+            "No page images found, and no text layer either — there is nothing to "
+            "read. The file may be empty or use an unsupported encoding.")
+
+    with tempfile.TemporaryDirectory() as td:
+        head = " ".join(t for _, t in eb.tess_lines(first[0:420, :], td, "inspect", 6))
+    missing = [label for rx, label in ROLL_MARKERS if not rx.search(head)]
+    if missing:
+        return "not_roll", (
+            "The first page does not look like an electoral roll — expected to find "
+            "%s near the top. Found instead: %r"
+            % (" and ".join(missing), head[:110].strip() or "(no text)"))
+    return "ok", head[:160]
+
+
 def page_count(path):
     """Page count without decoding any images."""
     try:
@@ -78,6 +131,10 @@ def process_pdf(path, workers=None, progress=None):
             "(Windows: winget install UB-Mannheim.TesseractOCR; "
             "Debian/Ubuntu: apt-get install tesseract-ocr) or set TESSERACT_PATH."
         )
+    kind, detail = inspect_pdf(path)
+    if kind != "ok":
+        raise RuntimeError(detail)
+
     workers = workers or max(1, min(12, (os.cpu_count() or 2)))
     total = page_count(path) or 1
 
@@ -135,6 +192,10 @@ def process_pdf(path, workers=None, progress=None):
             fl.append("no_name")
         if not r["age"]:
             fl.append("no_age")
+        # text that matched no known label: a new/renamed field would land here,
+        # so surface it rather than dropping it on the floor
+        if r.get("extra"):
+            fl.append("unparsed_text")
         r["flag"] = ",".join(fl)
 
     return rows, cover, _validate(rows, cover)
@@ -181,12 +242,28 @@ def _validate(rows, cov):
     if dup:
         checks.append("%d DUPLICATE EPIC" % dup); hard += 1
 
+    # Layout guard. Boxes of the right size but a different internal layout would
+    # crop the wrong regions and yield plausible-looking rubbish, which the count
+    # checks above cannot see. If most entries produced no recognisable name
+    # label, the template has moved and the crop offsets no longer apply.
+    named = sum(1 for r in rows if r["name"])
+    unparsed = sum(1 for r in rows if r.get("extra"))
+    layout_ok = n == 0 or named / n >= 0.6
+    if not layout_ok:
+        checks.append("LAYOUT MISMATCH: only %d of %d entries yielded a name; the "
+                      "PDF template has probably changed" % (named, n))
+        hard += 1
+    if unparsed:
+        checks.append("%d row(s) contain text matching no known field" % unparsed)
+
     return {
         "rows": n, "male": m, "female": f, "third": third,
         "blank_gender": blank,
         "serial_agree": sum(1 for r in rows if r["serial"] == str(r["seq"])),
         "flagged": sum(1 for r in rows if r["flag"]),
         "dup_epic": dup,
+        "unparsed": unparsed,
+        "layout_ok": layout_ok,
         "status": "CHECK" if hard else ("OK (clipped field in PDF)" if blank else "OK"),
         "checks": "; ".join(checks) or "no cover data",
     }

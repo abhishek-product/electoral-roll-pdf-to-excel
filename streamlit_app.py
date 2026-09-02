@@ -16,7 +16,8 @@ import engine
 MAX_MB = int(os.environ.get("MAX_UPLOAD_MB", "60"))
 
 COLS = ["part", "polling_station", "section", "serial", "seq", "epic", "name",
-        "relation", "relative_name", "house", "age", "gender", "page", "flag"]
+        "relation", "relative_name", "house", "age", "gender", "page",
+        "extra", "flag"]
 
 st.set_page_config(page_title="Electoral Roll PDF → Excel", page_icon="🗳️",
                    layout="wide", menu_items={})
