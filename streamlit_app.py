@@ -35,6 +35,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+@st.cache_data(show_spinner="Preparing Excel file…", max_entries=2)
 def build_xlsx(electors: pd.DataFrame) -> bytes:
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as xl:
@@ -47,6 +48,11 @@ def build_xlsx(electors: pd.DataFrame) -> bytes:
             ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = \
                 max(10, min(46, int(longest or 10) + 2))
     return buf.getvalue()
+
+
+@st.cache_data(show_spinner=False, max_entries=2)
+def build_csv(electors: pd.DataFrame) -> bytes:
+    return electors.to_csv(index=False).encode("utf-8-sig")
 
 
 def extract(uploads):
@@ -123,7 +129,7 @@ if df is not None and len(df):
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True)
     c2.download_button(
-        "⬇️  CSV", data=df.to_csv(index=False).encode("utf-8-sig"),
+        "⬇️  CSV", data=build_csv(df),
         file_name=f"electors_{stamp}.csv", mime="text/csv",
         use_container_width=True)
 
