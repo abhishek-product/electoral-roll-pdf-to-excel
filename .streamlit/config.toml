@@ -1,3 +1,8 @@
+[client]
+# hide the developer toolbar: Deploy button, Rerun / Auto rerun / Clear cache menu
+toolbarMode = "minimal"
+showSidebarNavigation = false
+
 [server]
 maxUploadSize = 200
 
